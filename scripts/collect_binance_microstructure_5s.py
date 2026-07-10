@@ -10,7 +10,7 @@ import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -18,6 +18,7 @@ import requests
 import yaml
 
 
+UTC = timezone.utc
 SCHEMA_VERSION = "binance_futures_microstructure_5s_v3"
 CSV_FIELDS = (
     "schema_version",
