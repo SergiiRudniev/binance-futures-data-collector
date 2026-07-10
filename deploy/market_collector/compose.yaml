@@ -1,0 +1,72 @@
+name: binance-futures-data-collector
+
+services:
+  collector:
+    build:
+      context: ../..
+      dockerfile: deploy/market_collector/Dockerfile
+    image: binance-futures-data-collector:1.0.0
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      TZ: UTC
+    volumes:
+      - ${COLLECTOR_DATA_DIR:-/srv/binance-futures-data/primary}:/data
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py", "/data/status/collector.json", "180"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    mem_limit: 768m
+    cpus: 1.5
+
+  backup:
+    image: binance-futures-data-collector:1.0.0
+    restart: unless-stopped
+    init: true
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      collector:
+        condition: service_started
+    environment:
+      TZ: UTC
+      BACKUP_INTERVAL_SECONDS: ${BACKUP_INTERVAL_SECONDS:-3600}
+      BACKUP_MIN_FREE_GB: ${BACKUP_MIN_FREE_GB:-4}
+    command: ["python", "/app/backup.py", "--source", "/data", "--destination", "/backup"]
+    volumes:
+      - ${COLLECTOR_DATA_DIR:-/srv/binance-futures-data/primary}:/data:ro
+      - ${BACKUP_DATA_DIR:-/srv/binance-futures-data/backup}:/backup
+    healthcheck:
+      test: ["CMD", "python", "/app/healthcheck.py", "/backup/backup_status.json", "7500"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 120s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "5"
+    mem_limit: 256m
+    cpus: 0.5

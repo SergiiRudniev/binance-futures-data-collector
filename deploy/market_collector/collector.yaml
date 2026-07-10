@@ -1,0 +1,28 @@
+schema_version: binance_futures_monthly_v1
+base_url: https://fapi.binance.com
+websocket_base_url: wss://fstream.binance.com
+symbols:
+  - BTCUSDT
+  - ETHUSDT
+  - SOLUSDT
+interval_seconds: 5
+depth_limit: 20
+request_timeout_seconds: 10
+request_retries: 5
+output_dir: /data
+raw_compression: gzip
+min_free_disk_gb: 6.0
+campaign_days: 30
+completed_heartbeat_seconds: 60
+websocket:
+  enabled: true
+  streams:
+    - markPrice@1s
+    - forceOrder
+  queue_size: 50000
+  flush_seconds: 2
+supplemental:
+  fast_seconds: 30
+  minute_seconds: 60
+  slow_seconds: 300
+  metadata_seconds: 86400

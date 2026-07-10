@@ -1,0 +1,4 @@
+**
+!scripts/collect_binance_microstructure_5s.py
+!scripts/run_monthly_market_collector.py
+!deploy/market_collector/**
