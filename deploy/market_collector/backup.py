@@ -65,6 +65,13 @@ class BackupMirror:
             temporary.unlink(missing_ok=True)
             return None
         source_hash = _sha256(source)
+        after_hash = source.stat()
+        if (
+            after.st_size != after_hash.st_size
+            or after.st_mtime_ns != after_hash.st_mtime_ns
+        ):
+            temporary.unlink(missing_ok=True)
+            return None
         backup_hash = _sha256(temporary)
         if source_hash != backup_hash:
             temporary.unlink(missing_ok=True)

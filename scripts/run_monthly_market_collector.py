@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import Future, ThreadPoolExecutor
 import gzip
 import json
 import os
@@ -278,6 +279,41 @@ class SupplementalCollector:
         return errors
 
 
+class SupplementalWorker:
+    """Keep slower supplemental REST calls off the critical 5s loop."""
+
+    def __init__(self, collector: SupplementalCollector) -> None:
+        self.collector = collector
+        self.executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="supplemental"
+        )
+        self.future: Future[list[dict[str, Any]]] | None = None
+
+    def poll(self, observed_at_ms: int) -> list[dict[str, Any]]:
+        completed: list[dict[str, Any]] = []
+        if self.future is not None:
+            if not self.future.done():
+                return completed
+            try:
+                completed = self.future.result()
+            except Exception as exc:
+                completed = [
+                    {
+                        "group": "worker",
+                        "dataset": "supplemental",
+                        "symbol": None,
+                        "error": repr(exc),
+                    }
+                ]
+        self.future = self.executor.submit(
+            self.collector.poll_due, int(observed_at_ms)
+        )
+        return completed
+
+    def close(self) -> None:
+        self.executor.shutdown(wait=True, cancel_futures=False)
+
+
 class WebSocketSideChannel:
     def __init__(
         self,
@@ -505,6 +541,7 @@ def run(config: dict[str, Any]) -> None:
             "metadata": int(supplemental_config["metadata_seconds"]),
         },
     )
+    supplemental_worker = SupplementalWorker(supplemental)
     websocket_config = config.get("websocket", {})
     side_channel = None
     if bool(websocket_config.get("enabled", True)):
@@ -563,7 +600,7 @@ def run(config: dict[str, Any]) -> None:
             try:
                 rows = collector.collect_once(now_ms=now_ms)
                 observed_ms = _now_ms()
-                supplemental_errors = supplemental.poll_due(observed_ms)
+                supplemental_errors = supplemental_worker.poll(observed_ms)
                 successful_buckets += 1
                 consecutive_failures = 0
                 last_success_ms = observed_ms
@@ -636,6 +673,7 @@ def run(config: dict[str, Any]) -> None:
                 interval = int(config["interval_seconds"])
                 stop_event.wait(max(0.05, _seconds_to_next_boundary(time.time(), interval)))
     finally:
+        supplemental_worker.close()
         if side_channel is not None:
             side_channel.stop()
         _atomic_json(

@@ -4,8 +4,11 @@ import gzip
 import json
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,12 +18,14 @@ for directory in (SCRIPTS, DEPLOY):
     if str(directory) not in sys.path:
         sys.path.insert(0, str(directory))
 
+import backup  # noqa: E402
 from backup import BackupMirror  # noqa: E402
 from healthcheck import heartbeat_is_fresh  # noqa: E402
 from run_monthly_market_collector import (  # noqa: E402
     DAY_MS,
     CampaignWindow,
     GzipRecordStore,
+    SupplementalWorker,
     WebSocketSideChannel,
 )
 
@@ -63,6 +68,63 @@ class MonthlyMarketCollectorTests(unittest.TestCase):
             value.unlink()
             mirror.run_once(now_ms=20_000)
             self.assertTrue(copied.exists())
+
+    def test_backup_skips_source_that_changes_while_hashing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "source"
+            destination = Path(directory) / "backup"
+            source.mkdir()
+            value = source / "live.jsonl.gz"
+            value.write_bytes(b"first")
+            original_hash = backup._sha256
+
+            def mutate_before_hash(path: Path) -> str:
+                if path == value:
+                    with path.open("ab") as handle:
+                        handle.write(b"-second")
+                return original_hash(path)
+
+            mirror = BackupMirror(source, destination)
+            with patch("backup._sha256", side_effect=mutate_before_hash):
+                result = mirror.run_once(now_ms=10_000)
+
+            self.assertEqual(result["copied_count"], 0)
+            self.assertEqual(result["unchanged_or_live_count"], 1)
+            self.assertFalse((destination / "mirror" / value.name).exists())
+
+    def test_supplemental_worker_never_blocks_critical_loop(self) -> None:
+        started = threading.Event()
+        release = threading.Event()
+
+        class SlowSupplemental:
+            def __init__(self) -> None:
+                self.calls: list[int] = []
+
+            def poll_due(self, observed_at_ms: int) -> list[dict[str, object]]:
+                self.calls.append(observed_at_ms)
+                started.set()
+                release.wait(2.0)
+                return [{"observed_at_ms": observed_at_ms}]
+
+        collector = SlowSupplemental()
+        worker = SupplementalWorker(collector)  # type: ignore[arg-type]
+        try:
+            before = time.perf_counter()
+            self.assertEqual(worker.poll(1_000), [])
+            self.assertTrue(started.wait(1.0))
+            self.assertEqual(worker.poll(2_000), [])
+            self.assertLess(time.perf_counter() - before, 0.5)
+            release.set()
+            deadline = time.monotonic() + 1.0
+            while worker.future is not None and not worker.future.done():
+                if time.monotonic() >= deadline:
+                    self.fail("Supplemental worker did not complete")
+                time.sleep(0.01)
+            self.assertEqual(worker.poll(3_000), [{"observed_at_ms": 1_000}])
+            self.assertEqual(collector.calls, [1_000])
+        finally:
+            release.set()
+            worker.close()
 
     def test_healthcheck_rejects_stale_heartbeat(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

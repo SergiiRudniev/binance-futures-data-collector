@@ -5,7 +5,7 @@ services:
     build:
       context: ../..
       dockerfile: deploy/market_collector/Dockerfile
-    image: binance-futures-data-collector:1.0.0
+    image: binance-futures-data-collector:1.0.1
     restart: unless-stopped
     init: true
     user: "1000:1000"
@@ -35,7 +35,7 @@ services:
     cpus: 1.5
 
   backup:
-    image: binance-futures-data-collector:1.0.0
+    image: binance-futures-data-collector:1.0.1
     restart: unless-stopped
     init: true
     user: "1000:1000"
